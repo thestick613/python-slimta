@@ -26,7 +26,7 @@ from __future__ import absolute_import
 from functools import partial
 from pprint import pformat
 
-from gevent.socket import SHUT_WR, SHUT_RD
+from eventlet.green.socket import SHUT_WR, SHUT_RD
 
 __all__ = ['SocketLogger']
 

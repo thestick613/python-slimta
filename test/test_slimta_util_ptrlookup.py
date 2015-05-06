@@ -1,7 +1,7 @@
 
 import unittest2 as unittest
 
-import gevent
+import eventlet
 from mox import MoxTestBase, IgnoreArg
 from dns.resolver import NXDOMAIN
 from dns.exception import DNSException
@@ -36,7 +36,6 @@ class TestPtrLookup(unittest.TestCase, MoxTestBase):
         dns_resolver.query(IgnoreArg(), 'PTR').AndRaise(NXDOMAIN)
         self.mox.ReplayAll()
         ptr = PtrLookup('127.0.0.1')
-        self.assertIsInstance(ptr, gevent.Greenlet)
         self.assertIsNone(ptr._run())
 
     def test_run_dnsexception(self):
@@ -44,14 +43,12 @@ class TestPtrLookup(unittest.TestCase, MoxTestBase):
         dns_resolver.query(IgnoreArg(), 'PTR').AndRaise(DNSException)
         self.mox.ReplayAll()
         ptr = PtrLookup('127.0.0.1')
-        self.assertIsInstance(ptr, gevent.Greenlet)
         self.assertIsNone(ptr._run())
 
     def test_run_dnssyntaxerror(self):
         self.mox.StubOutWithMock(dns_resolver, 'query')
         self.mox.ReplayAll()
         ptr = PtrLookup('abcd')
-        self.assertIsInstance(ptr, gevent.Greenlet)
         self.assertIsNone(ptr._run())
 
     def test_finish(self):
@@ -65,7 +62,7 @@ class TestPtrLookup(unittest.TestCase, MoxTestBase):
     def test_finish_timeout(self):
         self.mox.StubOutWithMock(dns_resolver, 'query')
         def long_sleep(*args):
-            gevent.sleep(1.0)
+            eventlet.sleep(1.0)
         dns_resolver.query(IgnoreArg(), 'PTR').WithSideEffects(long_sleep)
         self.mox.ReplayAll()
         ptr = PtrLookup('127.0.0.1')

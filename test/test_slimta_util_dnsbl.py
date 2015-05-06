@@ -2,7 +2,6 @@
 import unittest2 as unittest
 
 from mox import MoxTestBase, IsA
-import gevent
 from dns.resolver import NXDOMAIN
 
 from slimta.util import dns_resolver

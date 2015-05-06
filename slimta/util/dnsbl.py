@@ -30,15 +30,13 @@ from __future__ import absolute_import
 
 from functools import wraps
 
-import gevent
+import eventlet
 from dns.resolver import NXDOMAIN
 from dns.exception import DNSException
-from gevent.pool import Pool, Group
-from gevent.event import Event
+from eventlet import GreenPool, GreenPile
 
 from slimta import logging
 from slimta.util import dns_resolver
-from slimta.smtp.reply import Reply
 
 __all__ = ['DnsBlocklist', 'DnsBlocklistGroup', 'check_dnsbl']
 
@@ -86,10 +84,10 @@ class DnsBlocklist(object):
                   ``False`` otherwise.
 
         """
-        with gevent.Timeout(timeout, None):
+        with eventlet.Timeout(timeout, False):
             query = self._build_query(ip)
             try:
-                answers = dns_resolver.query(query, 'A')
+                dns_resolver.query(query, 'A')
             except NXDOMAIN:
                 return False
             except DNSException:
@@ -109,7 +107,7 @@ class DnsBlocklist(object):
         :returns: A string with the reason, or ``None``.
 
         """
-        with gevent.Timeout(timeout, None):
+        with eventlet.Timeout(timeout, False):
             query = self._build_query(ip)
             try:
                 answers = dns_resolver.query(query, 'TXT')
@@ -125,13 +123,8 @@ class DnsBlocklistGroup(object):
     """Allows a group of DNSBLs to be queried simultaneously."""
 
     def __init__(self, pool=None):
-        self.dnsbls = []
-        if isinstance(pool, Pool):
-            self.pool = pool
-        elif pool is None:
-            self.pool = gevent
-        else:
-            self.pool = Pool(pool)
+        self.dnsbls = {}
+        self.pool = pool or GreenPool()
 
     def add_dnsbl(self, address):
         """Adds a DNSBL domain name to the list of DNSBLs to check.
@@ -139,14 +132,13 @@ class DnsBlocklistGroup(object):
         :param address: The DNSBL domain name.
 
         """
-        self.dnsbls.append(DnsBlocklist(address))
+        self.dnsbls[address] = DnsBlocklist(address)
 
-    def _run_dnsbl_get(self, matches, dnsbl, ip):
-        if dnsbl.get(ip):
-            matches.add(dnsbl.address)
+    def _run_dnsbl_get(self, dnsbl, ip, timeout):
+        return dnsbl.address, dnsbl.get(ip, timeout)
 
-    def _run_dnsbl_get_reason(self, reasons, dnsbl, ip):
-        reasons[dnsbl.address] = dnsbl.get_reason(ip)
+    def _run_dnsbl_get_reason(self, dnsbl, ip, timeout):
+        return dnsbl.address, dnsbl.get_reason(ip, timeout)
 
     def __contains__(self, ip):
         return bool(self.get(ip, timeout=10.0))
@@ -160,16 +152,10 @@ class DnsBlocklistGroup(object):
                   matched a record for the IP address.
 
         """
-        matches = set()
-        group = Group()
-        with gevent.Timeout(timeout, None):
-            for dnsbl in self.dnsbls:
-                thread = self.pool.spawn(self._run_dnsbl_get,
-                                         matches, dnsbl, ip)
-                group.add(thread)
-            group.join()
-        group.kill()
-        return matches
+        pile = GreenPile(self.pool)
+        for dnsbl in self.dnsbls.itervalues():
+            pile.spawn(self._run_dnsbl_get, dnsbl, ip, timeout)
+        return set([address for address, match in pile if match])
 
     def get_reasons(self, matches, ip, timeout=None):
         """Gets the reasons for each matching DNSBL for the IP address.
@@ -183,15 +169,13 @@ class DnsBlocklistGroup(object):
 
         """
         reasons = dict.fromkeys(matches)
-        group = Group()
-        with gevent.Timeout(timeout, None):
-            for dnsbl in self.dnsbls:
-                if dnsbl.address in matches:
-                    thread = self.pool.spawn(self._run_dnsbl_get_reason,
-                                             reasons, dnsbl, ip)
-                    group.add(thread)
-            group.join()
-        group.kill()
+        pile = GreenPile(self.pool)
+        for address in matches:
+            dnsbl = self.dnsbls.get(address)
+            if dnsbl:
+                pile.spawn(self._run_dnsbl_get_reason, dnsbl, ip, timeout)
+        for address, reason in pile:
+            reasons[address] = reason
         return reasons
 
 

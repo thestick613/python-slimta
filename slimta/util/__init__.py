@@ -29,53 +29,26 @@ from __future__ import absolute_import
 from copy import copy
 from contextlib import contextmanager
 
-from gevent import monkey
+import eventlet
 
 from slimta.smtp.auth import Auth, CredentialsInvalidError
 
-__all__ = ['monkeypatch_all', 'dns_resolver', 'build_auth_from_dict']
+__all__ = ['dns_resolver', 'build_auth_from_dict']
 
 
-@contextmanager
-def monkeypatch_all(*args, **kwds):
-    """Returns a context manager that monkey-patches before execution and
-    reverts after execution.
-
-    :param args: Positional arguments fed directly into
-                 :func:`gevent.monkey.patch_all`.
-    :param kwds: Keyword arguments fed directly into
-                 :func:`gevent.monkey.patch_all`.
-
-    """
-    modules = ['socket', 'ssl', 'os', 'time', 'select', 'thread', 'threading',
-               'httplib']
-    before = {}
-    for mod in modules:
-        mod_obj = __import__(mod)
-        before[mod] = (mod_obj, vars(mod_obj).copy())
-    monkey.patch_all(*args, **kwds)
-    try:
-        yield
-    finally:
-        for mod in modules:
-            for k, v in before[mod][1].items():
-                setattr(before[mod][0], k, v)
-
-
-with monkeypatch_all():
-    import dns.resolver
+dns_resolver_mod = eventlet.import_patched('dns.resolver')
 
 #: .. versionadded:: 0.3.19
 #:
 #: This is an instance of `dns.resolver.Resolver()
 #: <http://www.dnspython.org/docs/1.11.1/dns.resolver.Resolver-class.html>`_
-#: monkey-patched with :mod:`gevent`. Additionally it has its
+#: monkey-patched with :mod:`eventlet`. Additionally it has its
 #: ``retry_servfail`` attribute set to ``True``.
 #:
 #: Built-in slimta modules use this resolver for custom DNS queries, such as
 #: *MX* record lookup. You can modify attributes such as ``timeout`` or
 #: ``lifetime`` to control query behavior.
-dns_resolver = dns.resolver.Resolver()
+dns_resolver = dns_resolver_mod.Resolver()
 dns_resolver.retry_servfail = True
 
 

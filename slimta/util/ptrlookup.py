@@ -28,9 +28,9 @@ hostname.
 
 However, it is not usually desired to slow down a client's request just because
 their PTR record lookup has not yet finished. This module implements a
-:class:`~gevent.Greenlet` thread that will look up a client's PTR record will
-its request is being processed. If the request finishes before the PTR record
-lookup, the lookup is stopped
+:class:`~eventlet.greenthread.GreenThread`-like object that will look up a
+client's PTR record will its request is being processed. If the request
+finishes before the PTR record lookup, the lookup is stopped.
 
 """
 
@@ -38,7 +38,8 @@ from __future__ import absolute_import
 
 import time
 
-import gevent
+import eventlet
+from greenlet import GreenletExit
 from dns import reversename
 from dns.resolver import NXDOMAIN
 from dns.exception import SyntaxError as DnsSyntaxError
@@ -49,9 +50,8 @@ from slimta import logging
 __all__ = ['PtrLookup']
 
 
-class PtrLookup(gevent.Greenlet):
-    """Asynchronously looks up the PTR record of an IP address, implemented as
-    a :class:`~gevent.Greenlet` thread.
+class PtrLookup(object):
+    """Asynchronously looks up the PTR record of an IP address.
 
     :param ip: The IP address to query.
 
@@ -61,6 +61,7 @@ class PtrLookup(gevent.Greenlet):
         super(PtrLookup, self).__init__()
         self.ip = ip
         self.start_time = None
+        self.thread = None
 
     @classmethod
     def from_getpeername(cls, socket):
@@ -89,13 +90,9 @@ class PtrLookup(gevent.Greenlet):
         return cls(ip), port
 
     def start(self):
-        """Starts the PTR lookup thread.
-
-        .. seealso:: :meth:`gevent.Greenlet.start`
-
-        """
+        """Initiates the PTR lookup."""
         self.start_time = time.time()
-        super(PtrLookup, self).start()
+        self.thread = eventlet.spawn(self._run)
 
     def _run(self):
         try:
@@ -108,7 +105,7 @@ class PtrLookup(gevent.Greenlet):
                 return str(answers[0])
             except IndexError:
                 pass
-        except (DnsSyntaxError, gevent.GreenletExit):
+        except (DnsSyntaxError, GreenletExit):
             pass
         except Exception:
             logging.log_exception(__name__, query=self.ip)
@@ -116,9 +113,6 @@ class PtrLookup(gevent.Greenlet):
     def finish(self, runtime=None):
         """Attempts to get the results of the PTR lookup. If the results are
         not available, ``None`` is returned instead.
-
-        When this method returns, the :class:`~gevent.Greenlet` executing the
-        lookup is killed.
 
         :param runtime: If this many seconds have not passed since the lookup
                         started, the method call blocks the remaining time. For
@@ -130,15 +124,17 @@ class PtrLookup(gevent.Greenlet):
         :returns: The PTR lookup results (a hostname string) or ``None``.
 
         """
+        result = None
         try:
             if runtime is None:
-                result = self.get(block=False)
+                remaining = None
             else:
-                timeout = time.time() - self.start_time
-                result = self.get(block=True, timeout=timeout)
-        except gevent.Timeout:
-            result = None
-        self.kill(block=False)
+                elapsed = time.time() - self.start_time
+                remaining = max(0.0, runtime - elapsed)
+            with eventlet.Timeout(remaining):
+                result = self.thread.wait()
+        except eventlet.Timeout:
+            self.thread.kill()
         return result
 
 
