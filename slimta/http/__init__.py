@@ -22,9 +22,8 @@
 """Root package for |slimta| HTTP client and server libraries.
 
 This package contains implementations of HTTP classes from :py:mod:`httplib`
-using gevent sockets. These are provided to avoid the complete
-re-implementation that ships in :mod:`gevent.httplib`, and to provide a more
-similar interface to other slimta libraries that use SSL/TLS.
+using eventlet sockets. These are provided for a more similar interface to
+other slimta libraries that use SSL/TLS.
 
 """
 
@@ -34,17 +33,14 @@ import urlparse
 from socket import error as socket_error
 from httplib import HTTPConnection as BuiltinHTTPConnection
 
-from gevent import socket, ssl
-
-from slimta.core import SlimtaError
+from eventlet.green import socket, ssl
 
 __all__ = ['HTTPConnection', 'HTTPSConnection', 'get_connection']
 
 
 class HTTPConnection(BuiltinHTTPConnection):
     """Modified version of the :py:class:`httplib.HTTPConnection` class that
-    uses gevent sockets. This attempts to avoid the complete re-implementation
-    that ships in :mod:`gevent.httplib`.
+    uses eventlet sockets.
 
     """
 
@@ -62,11 +58,11 @@ class HTTPConnection(BuiltinHTTPConnection):
 
 class HTTPSConnection(HTTPConnection):
     """Modified version of the :py:class:`httplib.HTTPSConnection` class that
-    uses gevent sockets and the more functional ``tls`` parameter.
+    uses eventlet sockets and the more functional ``tls`` parameter.
 
     :param tls: This keyword argument contains the keyword arguments passed
-                into :class:`~gevent.ssl.SSLSocket` when the connection is
-                encrypted.
+                into :class:`~eventlet.green.ssl.SSLSocket` when the connection
+                is encrypted.
 
     """
 

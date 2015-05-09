@@ -31,7 +31,8 @@ from __future__ import absolute_import
 
 import sys
 
-from gevent.pywsgi import WSGIServer as GeventWSGIServer
+import eventlet
+from eventlet.wsgi import server as wsgi_server
 
 from slimta import logging
 
@@ -49,23 +50,26 @@ class WsgiServer(object):
 
     """
 
-    def build_server(self, listener, pool=None, tls=None):
+    def start_server(self, listener, pool=None, tls=None):
         """Constructs and returns a WSGI server engine, configured to use the
         current object as its application.
 
         :param listener: Usually a ``(ip, port)`` tuple defining the interface
                          and port upon which to listen for connections.
-        :param pool: If given, defines a specific :class:`gevent.pool.Pool` to
-                     use for new greenlets.
+        :param pool: If given, defines a specific :class:`~eventlet.GreenPool`
+                     to use for new greenlets.
         :param tls: Optional dictionary of TLS settings passed directly as
-                    keyword arguments to :class:`gevent.ssl.SSLSocket`.
-        :rtype: :class:`gevent.pywsgi.WSGIServer`
+                    keyword arguments to
+                    :class:`~eventlet.green.ssl.SSLSocket`.
+        :rtype: :class:`~eventlet.greenthread.GreenThread`
 
         """
-        spawn = pool or 'default'
         tls = tls or {}
-        return GeventWSGIServer(listener, self, log=sys.stdout, spawn=spawn,
-                                **tls)
+        sock = eventlet.listen(listener)
+        if tls:
+            sock = eventlet.wrap_ssl(sock, **tls)
+        return eventlet.spawn(wsgi_server, sock, self, log=sys.stdout,
+                              custom_pool=pool)
 
     def handle(self, environ, start_response):
         """Overridden by sub-classes to handle WSGI requests and generate a

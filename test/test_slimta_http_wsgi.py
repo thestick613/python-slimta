@@ -1,18 +1,17 @@
 
 import unittest2 as unittest
-from mox import MoxTestBase, IsA
-import gevent
-from gevent.pywsgi import WSGIServer as GeventWSGIServer
+from mox import MoxTestBase
+from eventlet.greenthread import GreenThread
 
 from slimta.http.wsgi import WsgiServer, log
 
 
 class TestWsgiServer(unittest.TestCase, MoxTestBase):
 
-    def test_build_server(self):
+    def test_start_server(self):
         w = WsgiServer()
-        server = w.build_server(('0.0.0.0', 0))
-        self.assertIsInstance(server, GeventWSGIServer)
+        server = w.start_server(('0.0.0.0', 0))
+        self.assertIsInstance(server, GreenThread)
 
     def test_handle_unimplemented(self):
         w = WsgiServer()
