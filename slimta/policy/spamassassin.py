@@ -31,8 +31,8 @@ from __future__ import absolute_import
 import re
 import cStringIO
 
-from gevent import Timeout
-from gevent.socket import create_connection, SHUT_WR
+from eventlet import Timeout
+from eventlet.green.socket import create_connection, SHUT_WR
 
 from slimta import logging
 from slimta.envelope import Envelope

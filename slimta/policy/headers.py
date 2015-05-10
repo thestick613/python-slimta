@@ -29,7 +29,7 @@ from __future__ import absolute_import
 import uuid
 from time import strftime, gmtime, localtime
 from math import floor
-from socket import getfqdn
+from eventlet.green.socket import getfqdn
 
 from slimta.core import __version__ as VERSION
 from . import QueuePolicy
@@ -67,7 +67,7 @@ class AddMessageIdHeader(QueuePolicy):
     adding it if it does not exist.
 
     :param hostname: The hostname to use in the generated headers. By default,
-                     :func:`~gevent.socket.getfqdn()` is used.
+                     :func:`~socket.getfqdn()` is used.
 
     """
 
