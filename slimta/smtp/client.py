@@ -23,9 +23,8 @@
 
 from __future__ import absolute_import
 
-from gevent import Timeout
-from gevent.ssl import SSLSocket
-from gevent.socket import wait_read
+from eventlet import Timeout
+from eventlet.hubs import trampoline
 
 from .io import IO
 from .extensions import Extensions
@@ -49,7 +48,7 @@ class Client(object):
     :param tls_wrapper: Optional function that takes a socket and the ``tls``
                         dictionary, creates a new encrypted socket, performs
                         the TLS handshake, and returns it. The default uses
-                        :class:`~gevent.ssl.SSLSocket`.
+                        :class:`~eventlet.green.ssl.SSLSocket`.
 
     """
 
@@ -83,7 +82,7 @@ class Client(object):
         if sock_fd < 0:
             return False
         try:
-            wait_read(sock_fd, 0.1, Timeout())
+            trampoline(sock_fd, read=True, timeout=0.1)
         except Timeout:
             return False
         else:
@@ -187,7 +186,7 @@ class Client(object):
         :meth:`starttls()` there is no need to call this method.
 
         :param tls: Dictionary of keyword arguments for
-                    :class:`~gevent.ssl.SSLSocket`.
+                    :class:`~eventlet.green.ssl.SSLSocket`.
 
         """
         self.io.encrypt_socket(tls)
@@ -199,7 +198,7 @@ class Client(object):
         another call to :meth:`ehlo()`.
 
         :param tls: Dictionary of keyword arguments for
-                    :class:`~gevent.ssl.SSLSocket`.
+                    :class:`~eventlet.green.ssl.SSLSocket`.
         :returns: |Reply| object populated with the response.
 
         """

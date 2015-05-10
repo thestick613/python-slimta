@@ -26,12 +26,10 @@ import cStringIO
 from socket import error as socket_error
 from errno import ECONNRESET, EPIPE
 
-from gevent.ssl import SSLSocket, SSLError
-from gevent import socket
+from eventlet.green.ssl import SSLSocket, SSLError
 
 from slimta import logging
 from . import ConnectionLost, BadReply
-from .reply import Reply
 
 __all__ = ['IO']
 

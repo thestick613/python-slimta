@@ -1,8 +1,8 @@
 
 import unittest2 as unittest
 from mox import MoxTestBase, IsA
-from gevent.socket import socket
-from gevent.ssl import SSLError
+from eventlet.green.socket import socket
+from eventlet.green.ssl import SSLError
 
 from slimta.smtp.server import Server
 from slimta.smtp.auth import AuthSession, CredentialsInvalidError
@@ -105,7 +105,7 @@ class TestSmtpServer(unittest.TestCase, MoxTestBase):
         sock.sendall('221 2.0.0 Bye\r\n')
         self.mox.ReplayAll()
         s = Server(sock, None, tls=self.tls_args, tls_immediately=True,
-                               tls_wrapper=sock.tls_wrapper)
+                   tls_wrapper=sock.tls_wrapper)
         s.handle()
 
     def test_tls_immediately_sslerror(self):
@@ -115,7 +115,7 @@ class TestSmtpServer(unittest.TestCase, MoxTestBase):
         sock.sendall('421 4.7.0 TLS negotiation failed\r\n')
         self.mox.ReplayAll()
         s = Server(sock, None, tls=self.tls_args, tls_immediately=True,
-                               tls_wrapper=sock.tls_wrapper)
+                   tls_wrapper=sock.tls_wrapper)
         s.handle()
 
     def test_ehlo(self):

@@ -1,7 +1,7 @@
 
 import unittest2 as unittest
 from mox import MoxTestBase, IsA
-from gevent.socket import socket
+from eventlet.green.socket import socket
 
 from slimta.smtp.io import IO
 from slimta.smtp import BadReply, ConnectionLost

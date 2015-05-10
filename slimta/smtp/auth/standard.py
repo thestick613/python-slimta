@@ -35,7 +35,7 @@ import hmac
 import hashlib
 import base64
 
-from gevent.socket import gethostname
+from eventlet.green.socket import gethostname
 
 from ..reply import Reply
 from . import ServerAuthError, CredentialsInvalidError, \

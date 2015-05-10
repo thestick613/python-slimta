@@ -29,16 +29,14 @@ from __future__ import absolute_import
 
 import re
 
-from gevent.ssl import SSLError
-from gevent.socket import timeout as socket_timeout
-from gevent import Timeout
+from eventlet import Timeout
 
 from . import SmtpError, ConnectionLost
 from .datareader import DataReader
 from .io import IO
 from .extensions import Extensions
 from .auth import ServerAuthError, AuthSession
-from .reply import *
+from .reply import *  # NOQA
 
 __all__ = ['Server']
 
@@ -71,7 +69,7 @@ class Server(object):
     contains the SMTP extensions the server supports.
 
     :param socket: Connected socket for the session.
-    :type socket: :class:`gevent.socket.socket`
+    :type socket: :class:`~eventlet.green.socket.socket`
     :param handlers: Object with methods that will be called when
                      corresponding SMTP commands are received. These methods
                      can modify the |Reply| before the command response is
@@ -80,13 +78,13 @@ class Server(object):
                        This argument is deprecated in favor of ``auth_obj``,
                        but is still available for backwards-compatibility.
     :param tls: Optional dictionary of TLS settings passed directly as
-                keyword arguments to :class:`gevent.ssl.SSLSocket`.
+                keyword arguments to :class:`~eventlet.green.ssl.SSLSocket`.
     :param tls_immediately: If True, the socket will be encrypted
                             immediately.
     :param tls_wrapper: Optional function that takes a socket and the ``tls``
                         dictionary, creates a new encrypted socket, performs
                         the TLS handshake, and returns it. The default uses
-                        :class:`~gevent.ssl.SSLSocket`.
+                        :class:`~eventlet.green.ssl.SSLSocket`.
     :type tls_immediately: True or False
     :param command_timeout: Optional timeout waiting for a command to be
                             sent from the client.
@@ -200,7 +198,7 @@ class Server(object):
                     break
                 except ConnectionLost:
                     raise
-                except Exception as e:
+                except Exception:
                     unhandled_error.send(self.io)
                     raise
                 finally:
