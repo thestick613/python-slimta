@@ -31,13 +31,13 @@ from __future__ import absolute_import
 import time
 import bisect
 import collections
-from itertools import imap, izip, repeat, chain
+from itertools import imap, repeat
 
-import gevent
-from gevent import Greenlet
-from gevent.event import Event
-from gevent.lock import Semaphore
-from gevent.pool import Pool
+import eventlet
+from eventlet import GreenPool, Timeout
+from eventlet.event import Event
+from eventlet.semaphore import Semaphore
+from greenlet import GreenletExit
 
 from slimta.logging import log_exception
 from slimta.core import SlimtaError
@@ -183,7 +183,7 @@ class QueueStorage(object):
         raise NotImplementedError()
 
 
-class Queue(Greenlet):
+class Queue(object):
     """Manages the queue of |Envelope| objects waiting for delivery. This is
     not a standard FIFO queue, a message's place in the queue depends entirely
     on the timestamp of its next delivery attempt.
@@ -224,6 +224,7 @@ class Queue(Greenlet):
         self.queued_ids = set()
         self.queued_lock = Semaphore(1)
         self.queue_policies = []
+        self._thread = None
         self._use_pool('store_pool', store_pool)
         self._use_pool('relay_pool', relay_pool)
 
@@ -265,10 +266,10 @@ class Queue(Greenlet):
     def _use_pool(self, attr, pool):
         if pool is None:
             pass
-        elif isinstance(pool, Pool):
+        elif isinstance(pool, GreenPool):
             setattr(self, attr, pool)
         else:
-            setattr(self, attr, Pool(pool))
+            setattr(self, attr, GreenPool(pool))
 
     def _pool_run(self, which, func, *args, **kwargs):
         pool = getattr(self, which+'_pool', None)
@@ -279,24 +280,44 @@ class Queue(Greenlet):
             return func(*args, **kwargs)
 
     def _pool_imap(self, which, func, *iterables):
-        pool = getattr(self, which+'_pool', gevent)
+        pool = getattr(self, which+'_pool', eventlet)
         threads = imap(pool.spawn, repeat(func), *iterables)
         ret = []
         for thread in threads:
-            thread.join()
-            ret.append(thread.exception or thread.value)
+            try:
+                thread_ret = thread.wait()
+            except Exception as exc:
+                ret.append(exc)
+            else:
+                ret.append(thread_ret)
         return ret
 
     def _pool_spawn(self, which, func, *args, **kwargs):
-        pool = getattr(self, which+'_pool', gevent)
+        pool = getattr(self, which+'_pool', eventlet)
         return pool.spawn(func, *args, **kwargs)
+
+    def _wake_trigger(self):
+        try:
+            self.wake.send()
+        except Exception:
+            pass
+
+    def _wake_wait(self, timeout=None):
+        with Timeout(timeout, False):
+            self.wake.wait()
+
+    def _wake_reset(self):
+        try:
+            self.wake.reset()
+        except Exception:
+            pass
 
     def _add_queued(self, entry):
         timestamp, id = entry
         if id not in self.queued_ids | self.active_ids:
             bisect.insort(self.queued, entry)
             self.queued_ids.add(id)
-            self.wake.set()
+            self._wake_trigger()
 
     def enqueue(self, envelope):
         """Drops a new message in the queue for delivery. The first delivery
@@ -438,7 +459,7 @@ class Queue(Greenlet):
                 break
         if last_i > 0:
             self.queued = self.queued[last_i:]
-            self.queued_ids = set([id for timestamp, id in self.queued])
+            self.queued_ids = set([_id for _, _id in self.queued])
 
     def _wait_store(self):
         while True:
@@ -452,13 +473,13 @@ class Queue(Greenlet):
         try:
             first = self.queued[0]
         except IndexError:
-            self.wake.wait()
-            self.wake.clear()
+            self._wake_wait()
+            self._wake_reset()
             return
         first_timestamp = first[0]
         if first_timestamp > now:
-            self.wake.wait(first_timestamp-now)
-            self.wake.clear()
+            self._wake_wait(first_timestamp-now)
+            self._wake_reset()
 
     def flush(self):
         """Attempts to immediately flush all messages waiting in the queue,
@@ -469,8 +490,8 @@ class Queue(Greenlet):
            This can be a very expensive operation, use with care.
 
         """
-        self.wake.set()
-        self.wake.clear()
+        self._wake_trigger()
+        self._wake_reset()
         self.queued_lock.acquire()
         try:
             for entry in self.queued:
@@ -479,25 +500,36 @@ class Queue(Greenlet):
         finally:
             self.queued_lock.release()
 
+    def start(self):
+        """Start and return a :class:`~eventlet.greenthread.GreenThread`
+        running the queue.
+
+        """
+        self._thread = eventlet.spawn(self._run)
+        return self._thread
+
     def kill(self):
         """This method is used by |Queue| and |Queue|-like objects to properly
         end any associated services (such as running :class:`~gevent.Greenlet`
         threads) and close resources.
 
         """
-        super(Queue, self).kill()
+        self._thread.kill()
 
     def _run(self):
         if not self.relay:
             return
         self._pool_spawn('store', self._load_all)
         self._pool_spawn('store', self._wait_store)
-        while True:
+        done = False
+        while not done:
             self.queued_lock.acquire()
             try:
                 now = time.time()
                 self._check_ready(now)
                 self._wait_ready(now)
+            except GreenletExit:
+                done = True
             finally:
                 self.queued_lock.release()
 

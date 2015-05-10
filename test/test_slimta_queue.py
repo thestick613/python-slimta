@@ -4,9 +4,10 @@ from functools import wraps
 
 import unittest2 as unittest
 from mox import MoxTestBase, IsA
-import gevent
-from gevent.pool import Pool
-from gevent.event import AsyncResult
+from greenlet import GreenletExit
+import eventlet
+from eventlet import GreenPool
+from eventlet.event import Event
 
 from slimta.queue import Queue, QueueStorage
 from slimta.smtp.reply import Reply
@@ -28,7 +29,7 @@ def _redirect_stderr(f):
     return wrapper
 
 
-class TestQueue(unittest.TestCase, MoxTestBase):
+class TestQueue(MoxTestBase, unittest.TestCase):
 
     def setUp(self):
         super(TestQueue, self).setUp()
@@ -67,7 +68,7 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         queue._add_queued((99, 'one'))
         queue._add_queued((7, 'three'))
         self.assertEqual([(5, 'two'), (7, 'three'), (10, 'one')], queue.queued)
-        self.assertTrue(queue.wake.isSet())
+        self.assertTrue(queue.wake.ready())
 
     def test_load_all(self):
         self.store.load().AndReturn([(3, 'one'), (5, 'two'), (1, 'three')])
@@ -75,7 +76,7 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         queue = Queue(self.store, self.relay)
         queue._load_all()
         self.assertEqual([(1, 'three'), (3, 'one'), (5, 'two')], queue.queued)
-        self.assertTrue(queue.wake.isSet())
+        self.assertTrue(queue.wake.ready())
 
     def test_load_all_empty(self):
         self.store.load().AndReturn([])
@@ -83,7 +84,7 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         queue = Queue(self.store, self.relay)
         queue._load_all()
         self.assertEqual([], queue.queued)
-        self.assertFalse(queue.wake.isSet())
+        self.assertFalse(queue.wake.ready())
 
     def test_enqueue_wait(self):
         self.store.write(self.env, IsA(float)).AndReturn('1234')
@@ -92,14 +93,14 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         self.mox.ReplayAll()
         queue = Queue(self.store, self.relay, relay_pool=5)
         self.assertEqual([(self.env, '1234')], queue.enqueue(self.env))
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_wait_norelay(self):
         self.store.write(self.env, IsA(float)).AndReturn('1234')
         self.mox.ReplayAll()
         queue = Queue(self.store, relay_pool=5)
         self.assertEqual([(self.env, '1234')], queue.enqueue(self.env))
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_wait_splitpolicy(self):
         splitpolicy1 = self.mox.CreateMock(QueuePolicy)
@@ -129,13 +130,13 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         queue.add_policy(splitpolicy2)
         self.assertEqual([(env1, '1234'), (env2, '5678'), (env3, '90AB')],
                          queue.enqueue(self.env))
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_randomfail(self):
-        self.store.write(self.env, IsA(float)).AndRaise(gevent.GreenletExit)
+        self.store.write(self.env, IsA(float)).AndRaise(GreenletExit)
         self.mox.ReplayAll()
         queue = Queue(self.store, self.relay, relay_pool=5)
-        self.assertRaises(gevent.GreenletExit, queue.enqueue, self.env)
+        self.assertRaises(GreenletExit, queue.enqueue, self.env)
 
     def test_enqueue_wait_transientfail(self):
         self.store.write(self.env, IsA(float)).AndReturn('1234')
@@ -147,9 +148,11 @@ class TestQueue(unittest.TestCase, MoxTestBase):
             return 0
         queue = Queue(self.store, self.relay, backoff=backoff, relay_pool=5)
         queue.enqueue(self.env)
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_wait_transientfail_noretry(self):
+        self.store.load().AndReturn([])
+        self.store.wait().AndRaise(NotImplementedError)
         self.store.write(self.env, IsA(float)).AndReturn('1234')
         self.relay._attempt(self.env, 0).AndRaise(TransientRelayError('transient', Reply('450', 'transient')))
         self.store.increment_attempts('1234')
@@ -158,8 +161,10 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         def no_bounce(envelope, reply):
             return None
         queue = Queue(self.store, self.relay, bounce_factory=no_bounce, relay_pool=5)
+        queue.start()
+        eventlet.sleep(0.0)
         queue.enqueue(self.env)
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_wait_permanentfail(self):
         self.store.write(self.env, IsA(float)).AndReturn('1234')
@@ -170,10 +175,12 @@ class TestQueue(unittest.TestCase, MoxTestBase):
             return None
         queue = Queue(self.store, self.relay, bounce_factory=no_bounce, relay_pool=5)
         queue.enqueue(self.env)
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     @_redirect_stderr
     def test_enqueue_wait_unhandledfail(self):
+        self.store.load().AndReturn([])
+        self.store.wait().AndRaise(NotImplementedError)
         self.store.write(self.env, IsA(float)).AndReturn('1234')
         self.relay._attempt(self.env, 0).AndRaise(Exception('unhandled error'))
         self.store.increment_attempts('1234')
@@ -182,8 +189,10 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         def backoff(envelope, attempts):
             return 0
         queue = Queue(self.store, self.relay, backoff=backoff, relay_pool=5)
+        queue.start()
+        eventlet.sleep(0.0)
         queue.enqueue(self.env)
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_wait_partial_relay(self):
         env = Envelope('sender@example.com', ['rcpt1@example.com',
@@ -203,7 +212,7 @@ class TestQueue(unittest.TestCase, MoxTestBase):
             return None
         queue = Queue(self.store, self.relay, backoff=backoff, bounce_factory=no_bounce, relay_pool=5)
         queue.enqueue(env)
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_enqueue_wait_partial_relay_expired(self):
         env = Envelope('sender@example.com', ['rcpt1@example.com',
@@ -221,41 +230,49 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         self.mox.ReplayAll()
         queue = Queue(self.store, self.relay, bounce_factory=bounce_mock, relay_pool=5)
         queue.enqueue(env)
-        queue.relay_pool.join()
+        queue.relay_pool.waitall()
 
     def test_check_ready(self):
+        self.store.load().AndReturn([])
+        self.store.wait().AndRaise(NotImplementedError)
         self.store.get('1234').AndReturn((self.env, 0))
         self.relay._attempt(self.env, 0)
         self.store.remove('1234')
         self.mox.ReplayAll()
-        queue = Queue(self.store, self.relay, store_pool=Pool(5))
+        queue = Queue(self.store, self.relay, store_pool=5)
+        queue.start()
+        eventlet.sleep(0.0)
         queue._add_queued((10, '1234'))
         queue._check_ready(20)
-        queue.store_pool.join()
+        queue.store_pool.waitall()
 
     def test_check_ready_missing(self):
+        self.store.load().AndReturn([])
+        self.store.wait().AndRaise(NotImplementedError)
         self.store.get('1234').AndRaise(KeyError)
         self.mox.ReplayAll()
-        queue = Queue(self.store, self.relay, store_pool=Pool(5))
+        queue = Queue(self.store, self.relay, store_pool=5)
+        queue.start()
+        eventlet.sleep(0.0)
         queue._add_queued((10, '1234'))
         queue._check_ready(20)
-        queue.store_pool.join()
+        queue.store_pool.waitall()
 
     def test_check_ready_empty(self):
         self.mox.ReplayAll()
         queue = Queue(self.store, self.relay, store_pool=5)
         queue._add_queued((20, '1234'))
         queue._check_ready(10)
-        queue.store_pool.join()
+        queue.store_pool.waitall()
 
     def test_wait_store(self):
         queue = Queue(self.store, self.relay, relay_pool=5)
-        queue.wake = self.mox.CreateMock(AsyncResult)
+        queue.wake = self.mox.CreateMock(Event)
         self.store.wait().AndReturn([(1234567890, '1234')])
-        queue.wake.set()
+        queue.wake.send()
         self.store.wait().AndReturn([])
         self.store.wait().AndReturn([(2345678901, '5678')])
-        queue.wake.set()
+        queue.wake.send()
         self.store.wait().AndRaise(NotImplementedError)
         self.mox.ReplayAll()
         queue._wait_store()
@@ -264,57 +281,73 @@ class TestQueue(unittest.TestCase, MoxTestBase):
         queue = Queue(self.store, self.relay)
         def wait_func():
             queue._wait_ready(20)
-        thread = gevent.spawn(wait_func)
-        gevent.sleep(0)
-        self.assertFalse(thread.ready())
+            return True
+        thread = eventlet.spawn(wait_func)
+        eventlet.sleep(0)
+        with self.assertRaises(eventlet.Timeout):
+            with eventlet.Timeout(0.0):
+                thread.wait()
         queue._add_queued((10, '1234'))
-        gevent.sleep(0)
-        self.assertTrue(thread.ready())
+        eventlet.sleep(0)
+        self.assertTrue(thread.wait())
 
     def test_wait_ready_noneready(self):
         queue = Queue(self.store, self.relay)
         queue._add_queued((20, '1234'))
-        queue.wake.clear()
+        queue.wake.reset()
         def wait_func():
             queue._wait_ready(10)
-        thread = gevent.spawn(wait_func)
-        gevent.sleep(0)
-        self.assertFalse(thread.ready())
+            return True
+        thread = eventlet.spawn(wait_func)
+        eventlet.sleep(0)
+        with self.assertRaises(eventlet.Timeout):
+            with eventlet.Timeout(0.0):
+                thread.wait()
         queue._add_queued((5, '5678'))
-        gevent.sleep(0)
-        self.assertTrue(thread.ready())
+        eventlet.sleep(0)
+        self.assertTrue(thread.wait())
 
     def test_wait_ready_nowait(self):
         queue = Queue(self.store, self.relay)
         queue._add_queued((10, '1234'))
-        with gevent.Timeout(1.0):
+        with eventlet.Timeout(1.0):
             queue._wait_ready(20)
 
     def test_flush(self):
-        self.store.get('three').AndReturn((self.env, 1))
-        self.store.get('two').AndReturn((self.env, 2))
-        self.store.get('one').AndReturn((self.env, 3))
-        self.relay._attempt(self.env, 1)
-        self.store.remove('three')
-        self.relay._attempt(self.env, 2)
-        self.store.remove('two')
-        self.relay._attempt(self.env, 3)
-        self.store.remove('one')
+        self.store.load().AndReturn([])
+        self.store.wait().AndRaise(NotImplementedError)
+        self.store.get('three').InAnyOrder().AndReturn((self.env, 1))
+        self.store.get('two').InAnyOrder().AndReturn((self.env, 2))
+        self.store.get('one').InAnyOrder().AndReturn((self.env, 3))
+        self.relay._attempt(self.env, 1).InAnyOrder()
+        self.store.remove('three').InAnyOrder()
+        self.relay._attempt(self.env, 2).InAnyOrder()
+        self.store.remove('two').InAnyOrder()
+        self.relay._attempt(self.env, 3).InAnyOrder()
+        self.store.remove('one').InAnyOrder()
         self.mox.ReplayAll()
         queue = Queue(self.store, self.relay, store_pool=5, relay_pool=5)
+        queue.start()
+        eventlet.sleep(0.0)
         queue._add_queued((float('inf'), 'one'))
         queue._add_queued((0, 'two'))
         queue._add_queued((float('-inf'), 'three'))
         queue.flush()
-        queue.store_pool.join()
-        queue.relay_pool.join()
+        eventlet.sleep(0.0)
+        queue.store_pool.waitall()
+        queue.relay_pool.waitall()
 
     def test_kill(self):
+        self.store.load().AndReturn([])
+        self.store.wait().AndRaise(NotImplementedError)
         self.mox.ReplayAll()
         queue = Queue(self.store, self.relay)
-        self.assertFalse(queue.ready())
+        queue.start()
+        with self.assertRaises(eventlet.Timeout):
+            with eventlet.Timeout(0.0):
+                queue._thread.wait()
         queue.kill()
-        self.assertTrue(queue.ready())
+        queue._thread.wait()
 
 
 # vim:et:fdm=marker:sts=4:sw=4:ts=4
