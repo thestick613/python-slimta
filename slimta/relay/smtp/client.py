@@ -270,8 +270,13 @@ class SmtpRelayClient(RelayPoolClient):
             result.set_exception(e)
         except SmtpError as e:
             if not result.ready():
-                reply = Reply('421', '4.3.0 {0!s}'.format(e),
-                              command=self.current_command)
+                if self.client.io.last_error:
+                    reply = Reply(self.client.io.last_error_code, self.client.io.last_error_message,
+                                  command=self.current_command)
+                else:
+                    reply = Reply('421', '4.3.0 {0!s}'.format(e),
+                                  command=self.current_command)
+
                 relay_error = SmtpRelayError.factory(reply)
                 result.set_exception(relay_error)
         except Timeout:

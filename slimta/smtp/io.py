@@ -60,6 +60,7 @@ class IO(object):
 
         self.send_buffer = BytesIO()
         self.recv_buffer = b''
+        self.last_error = False
 
     @property
     def encrypted(self):
@@ -141,6 +142,12 @@ class IO(object):
                         raise BadReply(match.group(1))
                     code = match.group(2)
                     message_lines.append(match.group(4))
+
+                    if code[0] in '45':
+                        self.last_error = True
+                        self.last_error_code = code
+                        self.last_error_message = match.group(4)
+
                     self.recv_buffer = input[match.end(0):]
 
                     if match.group(3) != b'-':
