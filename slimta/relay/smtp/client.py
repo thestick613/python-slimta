@@ -134,7 +134,7 @@ class SmtpRelayClient(RelayPoolClient):
             self.client.encrypt(self.tls)
         self._banner()
         self._ehlo()
-        if self.tls and not self.tls_immediately:
+        if self.tls or not self.tls_immediately:
             if self.tls_required or 'STARTTLS' in self.client.extensions:
                 self._starttls()
                 self._ehlo()
